@@ -1,0 +1,6 @@
+{
+    "build": {"dockerfile": "Dockerfile"},
+    "extensions": ["ms-vscode.cpptools"],
+    "containerUser": "rolfn",
+    "name": "primes"
+}
