@@ -187,7 +187,7 @@ int runSieve(int cSecondsRequested, int cThreadsRequested, uint64_t ullLimitRequ
             { 
                 std::unique_ptr<prime_sieve>(new prime_sieve(llUpperLimit))->runSieve(); 
             }));
-#ifdef CPU_SET
+#ifdef USE_CPU_AFFINITY
             // https://stackoverflow.com/questions/24645880/set-cpu-affinity-when-create-a-thread
             cpu_set_t cpuset;
             CPU_ZERO(&cpuset);
