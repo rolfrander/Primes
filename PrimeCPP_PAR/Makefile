@@ -1,2 +1,5 @@
-primes_par: PrimeCPP_PAR.cpp
-	g++ -pthread -Ofast -std=c++17 PrimeCPP_PAR.cpp -oprimes_par.exe
+
+CXXFLAGS=-pthread -Ofast -std=c++17 
+
+primes_par.exe: PrimeCPP_PAR.cpp
+	g++ $< -o$@
