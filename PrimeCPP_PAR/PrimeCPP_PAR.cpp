@@ -13,6 +13,10 @@
 #include <thread>
 #include <memory>
 
+#if defined(__linux__) && defined(USE_CPU_AFFINITY)
+#include <pthread.h>
+#endif
+
 using namespace std;
 using namespace std::chrono;
 
@@ -169,6 +173,7 @@ int runSieve(int cSecondsRequested, int cThreadsRequested, uint64_t ullLimitRequ
 
     auto tStart       = steady_clock::now();
 
+
     while (duration_cast<seconds>(steady_clock::now() - tStart).count() < cSeconds)
     {
         vector<thread> threadPool;
@@ -177,11 +182,22 @@ int runSieve(int cSecondsRequested, int cThreadsRequested, uint64_t ullLimitRequ
         // that we create on the heap, rather than the stack, due to their possible enormity.  By using
         // a unique_ptr it will automatically free resources as soon as its torn down.
 
-        for (unsigned int i = 0; i < cThreads; i++)
+        for (unsigned int i = 0; i < cThreads; i++) {
             threadPool.push_back(thread([llUpperLimit] 
             { 
                 std::unique_ptr<prime_sieve>(new prime_sieve(llUpperLimit))->runSieve(); 
             }));
+#ifdef CPU_SET
+            // https://stackoverflow.com/questions/24645880/set-cpu-affinity-when-create-a-thread
+            cpu_set_t cpuset;
+            CPU_ZERO(&cpuset);
+            CPU_SET(i, &cpuset);
+            int rc = pthread_setaffinity_np(threadPool.back().native_handle(), sizeof(cpu_set_t), &cpuset);
+            if(rc != 0) {
+                std::cerr << "Error setting thread affinity on thread " << i << ", error code: " << rc << endl;
+            }
+#endif
+        }
 
         // Now we wait for all of the threads to finish before we repeat
 
