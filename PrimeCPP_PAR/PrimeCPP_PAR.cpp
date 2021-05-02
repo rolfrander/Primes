@@ -150,6 +150,63 @@ class prime_sieve
       }
 };
 
+int runSieve(int cSecondsRequested, int cThreadsRequested, uint64_t ullLimitRequested, bool bQuiet, bool bPrintPrimes) {
+    auto cPasses      = 0;
+    auto cSeconds     = (cSecondsRequested ? cSecondsRequested : 5);
+    auto cThreads     = (cThreadsRequested ? cThreadsRequested : thread::hardware_concurrency());
+    auto llUpperLimit = (ullLimitRequested ? ullLimitRequested : DEFAULT_UPPER_LIMIT);
+
+    if (!bQuiet)
+    {
+        printf("Computing primes to %lu on %d thread%s for %d second%s.\n", 
+            llUpperLimit,
+            cThreads,
+            cThreads == 1 ? "" : "s",
+            cSeconds,
+            cSeconds == 1 ? "" : "s"
+        );
+    }
+
+    auto tStart       = steady_clock::now();
+
+    while (duration_cast<seconds>(steady_clock::now() - tStart).count() < cSeconds)
+    {
+        vector<thread> threadPool;
+        
+        // We create N threads and give them each the job of runing the 'runSieve' method on a sieve
+        // that we create on the heap, rather than the stack, due to their possible enormity.  By using
+        // a unique_ptr it will automatically free resources as soon as its torn down.
+
+        for (unsigned int i = 0; i < cThreads; i++)
+            threadPool.push_back(thread([llUpperLimit] 
+            { 
+                std::unique_ptr<prime_sieve>(new prime_sieve(llUpperLimit))->runSieve(); 
+            }));
+
+        // Now we wait for all of the threads to finish before we repeat
+
+        for (auto &th : threadPool) 
+            th.join();
+
+        // Credit us with one pass for each of the threads we did work on
+        cPasses += cThreads;
+    }
+
+    auto tEnd = steady_clock::now() - tStart;
+    auto duration = duration_cast<microseconds>(tEnd).count()/1000000.0;
+    
+    prime_sieve checkSieve(llUpperLimit);
+    checkSieve.runSieve();
+    auto result = checkSieve.validateResults() ? checkSieve.countPrimes() : 0;
+  
+    if (!bQuiet)
+        checkSieve.printResults(bPrintPrimes, duration , cPasses, cThreads);
+    else
+        cout << cThreads << ", " << cPasses / duration << ", " << cPasses << ", " << duration / cPasses << endl;
+
+    return result;
+}
+
 int main(int argc, char **argv)
 {
     vector<string> args(argv + 1, argv + argc);         // From first to last argument in the argv array
@@ -219,65 +276,14 @@ int main(int argc, char **argv)
         return 0;
     }
 
-    auto cPasses      = 0;
-    auto cSeconds     = (cSecondsRequested ? cSecondsRequested : 5);
-    auto cThreads     = (cThreadsRequested ? cThreadsRequested : thread::hardware_concurrency());
-    auto llUpperLimit = (ullLimitRequested ? ullLimitRequested : DEFAULT_UPPER_LIMIT);
-
-    if (!bQuiet)
-    {
-        printf("Computing primes to %llu on %d thread%s for %d second%s.\n", 
-            llUpperLimit,
-            cThreads,
-            cThreads == 1 ? "" : "s",
-            cSeconds,
-            cSeconds == 1 ? "" : "s"
-        );
-    }
-    auto tStart       = steady_clock::now();
-
-    if (!bOneshot)
-    {
-        while (duration_cast<seconds>(steady_clock::now() - tStart).count() < cSeconds)
-        {
-            vector<thread> threadPool;
-            
-            // We create N threads and give them each the job of runing the 'runSieve' method on a sieve
-            // that we create on the heap, rather than the stack, due to their possible enormity.  By using
-            // a unique_ptr it will automatically free resources as soon as its torn down.
-
-            for (unsigned int i = 0; i < cThreads; i++)
-                threadPool.push_back(thread([llUpperLimit] 
-                { 
-                    std::unique_ptr<prime_sieve>(new prime_sieve(llUpperLimit))->runSieve(); 
-                }));
-
-            // Now we wait for all of the threads to finish before we repeat
-
-            for (auto &th : threadPool) 
-                th.join();
-
-            // Credit us with one pass for each of the threads we did work on
-            cPasses += cThreads;
+    auto result = 0;
+    if(!bQuiet) {
+        result = runSieve(cSecondsRequested, cThreadsRequested, ullLimitRequested, bQuiet, bPrintPrimes);
+    } else {
+        for(int i=1; i<=cThreadsRequested; i++) {
+            result = runSieve(cSecondsRequested, i, ullLimitRequested, bQuiet, bPrintPrimes);
         }
     }
-    else
-    {
-        cPasses++;
-    }
-
-    auto tEnd = steady_clock::now() - tStart;
-    auto duration = duration_cast<microseconds>(tEnd).count()/1000000.0;
-    
-    prime_sieve checkSieve(llUpperLimit);
-    checkSieve.runSieve();
-    auto result = checkSieve.validateResults() ? checkSieve.countPrimes() : 0;
-  
-    if (!bQuiet)
-        checkSieve.printResults(bPrintPrimes, duration , cPasses, cThreads);
-    else
-        cout << cPasses << ", " << duration / cPasses << endl;
-
     // On success return the count of primes found; on failure, return 0
 
     return (int) result;
