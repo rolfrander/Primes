@@ -22,6 +22,73 @@ using namespace std::chrono;
 
 const uint64_t DEFAULT_UPPER_LIMIT = 10'000'000LLU;
 
+const double baseline[] = {
+163,
+317,
+415,
+518,
+623,
+734,
+835,
+947,
+1051,
+1140,
+1235,
+1325,
+1428,
+1499,
+1607,
+2144,
+2238,
+2338,
+2474,
+2581,
+2690,
+2796,
+2871,
+2949,
+3011,
+3115,
+3204,
+3255,
+3320,
+3281,
+3176,
+2968,
+3007,
+3062,
+3124,
+3176,
+3222,
+3276,
+3336,
+3402,
+3471,
+3519,
+3568,
+3621,
+3673,
+3741,
+3791,
+3841,
+3899,
+3945,
+3995,
+4053,
+4105,
+4164,
+4215,
+4260,
+4304,
+4357,
+4401,
+4455,
+4485,
+4538,
+4565,
+4562
+};
+
 // prime_sieve
 //
 // Represents the data comprising the sieve (an array of N bits, where N is the upper limit prime being tested)
@@ -196,7 +263,12 @@ int runSieve(int cSeconds, int cThreads, uint64_t llUpperLimit, bool bQuiet, boo
             // https://stackoverflow.com/questions/24645880/set-cpu-affinity-when-create-a-thread
             cpu_set_t cpuset;
             CPU_ZERO(&cpuset);
-            CPU_SET(i, &cpuset);
+            // move the first bit of the counter last ==> pin all the even cpu-s first, then the odd
+            // (this might give better cache performance if cpuid 2n and 2n+1 shares cache).
+            // this formula only works as expected with 32 cores and 64 threads (6 bits of cpu numbers)
+            // moving bit 4 to position 1 and bit 5 to position 0
+            unsigned int cpunum = ((i & 15) << 2) | ((i & 16) >> 3) | ((i & 32) >> 5); 
+            CPU_SET(cpunum, &cpuset);
             int rc = pthread_setaffinity_np(threadPool.back().native_handle(), sizeof(cpu_set_t), &cpuset);
             if(rc != 0) {
                 std::cerr << "Error setting thread affinity on thread " << i << ", error code: " << rc << endl;
@@ -222,8 +294,13 @@ int runSieve(int cSeconds, int cThreads, uint64_t llUpperLimit, bool bQuiet, boo
   
     if (!bQuiet)
         checkSieve.printResults(bPrintPrimes, duration , cPasses, cThreads);
-    else
-        cout << cThreads << ", " << cPasses / duration << ", " << cPasses << ", " << duration / cPasses << endl;
+    else {
+        double b = baseline[cThreads-1];
+        double speed = cPasses / duration;
+        cout << cThreads << ", " << speed << ", " << int((speed/b-1)*100) << endl;
+        //cout << cThreads << ", " << cPasses / duration << ", " << cPasses << ", " << duration / cPasses << endl;
+
+    }
 
     return result;
 }
@@ -244,6 +321,9 @@ int main(int argc, char **argv)
     {
         if (*i == "-h" || *i == "--help") {
               cout << "Syntax: " << argv[0] << " [-t,--threads threads] [-s,--seconds seconds] [-l,--limit limit] [-1,--oneshot] [-q,--quiet] [-h] " << endl;
+#ifdef USE_CPU_AFFINITY
+              cout << "Compiled with CPU affinity" << endl;
+#endif
             return 0;
         }
         else if (*i == "-t" || *i == "--threads") 
