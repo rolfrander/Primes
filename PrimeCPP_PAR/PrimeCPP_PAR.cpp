@@ -32,11 +32,12 @@ class prime_sieve
   private:
 
       vector<bool> Bits;                                        // Sieve data, where 1==prime, 0==not
-
+      uint64_t limit;
    public:
 
-      prime_sieve(uint64_t n) : Bits(n, true)                  // Initialize all to true (potential primes)
+      prime_sieve(uint64_t n) : Bits((n>>1)-1, true)                  // Initialize all to true (potential primes)
       {
+          limit = n;
       }
 
       ~prime_sieve()
@@ -50,12 +51,13 @@ class prime_sieve
 
       void runSieve()
       {
-          uint64_t factor = 3;
+          // the Bits-array only contains values for odd numbers. The actual number n for index i is (i*2)+1
+          uint64_t factor = 1;
           uint64_t q = (int) sqrt(Bits.size());
 
           while (factor <= q)
           {
-              for (uint64_t num = factor; num < Bits.size(); num += 2)
+              for (uint64_t num = factor; num < Bits.size(); num++)
               {
                   if (Bits[num])
                   {
@@ -63,10 +65,16 @@ class prime_sieve
                       break;
                   }
               }
-              for (uint64_t num = factor * factor; num < Bits.size(); num += factor * 2)
+              // the starting number is supposed to be factor squared, but since the factor is scaled and
+              // shifted we need some maths here...
+              // n = (factor*2)+1
+              // => n^2 = 4*factor^2 + 4*factor + 1
+              // scaling back, subtract one and divide by 2: 2*factor^2 + 2*factor = 2 * factor * (factor + 1)
+              // each jump is also scaled
+              for (uint64_t num = 2*factor*(factor + 1); num < Bits.size(); num += (factor<<1)+1)
                   Bits[num] = false;
 
-              factor += 2;            
+              factor++;
           }
       }
 
@@ -76,8 +84,8 @@ class prime_sieve
 
       size_t countPrimes() const
       {
-          size_t count = (Bits.size() >= 2);                   // Count 2 as prime if within range
-          for (int i = 3; i < Bits.size(); i+=2)
+          size_t count = (Bits.size() >= 1);                   // Count 2 as prime if within range
+          for (int i = 1; i < Bits.size(); i++)
               if (Bits[i])
                   count++;
           return count;
@@ -90,7 +98,7 @@ class prime_sieve
       bool isPrime(uint64_t n) const
       {
           if (n & 1)
-              return Bits[n];
+              return Bits[(n-1)>>1];
           else
               return false;
       }
@@ -115,9 +123,9 @@ class prime_sieve
                 {  1'000'000'000LLU, 50847534  },
                 { 10'000'000'000LLU, 455052511 },
           };
-          if (resultsDictionary.end() == resultsDictionary.find(Bits.size()))
+          if (resultsDictionary.end() == resultsDictionary.find(limit))
               return false;
-          return resultsDictionary.find(Bits.size())->second == countPrimes();
+          return resultsDictionary.find(limit)->second == countPrimes();
       }
 
       // printResults
@@ -129,13 +137,13 @@ class prime_sieve
           if (showResults)
               cout << "2, ";
 
-          size_t count = (Bits.size() >= 2);                   // Count 2 as prime if in range
-          for (uint64_t num = 3; num <= Bits.size(); num+=2)
+          size_t count = (Bits.size() >= 1);                   // Count 2 as prime if in range
+          for (uint64_t num = 1; num <= Bits.size(); num++)
           {
               if (Bits[num])
               {
                   if (showResults)
-                      cout << num << ", ";
+                      cout << ((num<<1)+1) << ", ";
                   count++;
               }
           }
@@ -147,18 +155,15 @@ class prime_sieve
                << "Threads: " << threads << ", "
                << "Time: "    << duration << ", " 
                << "Average: " << duration/passes << ", "
-               << "Limit: "   << Bits.size() << ", "
+               << "Limit: "   << limit << ", "
                << "Counts: "  << count << "/" << countPrimes() << ", "
                << "Valid : "  << (validateResults() ? "Pass" : "FAIL!") 
                << "\n";
       }
 };
 
-int runSieve(int cSecondsRequested, int cThreadsRequested, uint64_t ullLimitRequested, bool bQuiet, bool bPrintPrimes) {
+int runSieve(int cSeconds, int cThreads, uint64_t llUpperLimit, bool bQuiet, bool bPrintPrimes) {
     auto cPasses      = 0;
-    auto cSeconds     = (cSecondsRequested ? cSecondsRequested : 5);
-    auto cThreads     = (cThreadsRequested ? cThreadsRequested : thread::hardware_concurrency());
-    auto llUpperLimit = (ullLimitRequested ? ullLimitRequested : DEFAULT_UPPER_LIMIT);
 
     if (!bQuiet)
     {
@@ -258,7 +263,6 @@ int main(int argc, char **argv)
         }
         else if (*i == "-1" || *i == "--oneshot") 
         {
-            i++;
             bOneshot = true;
             cThreadsRequested = 1;
         }
@@ -272,7 +276,7 @@ int main(int argc, char **argv)
         }        
         else 
         {
-            fprintf(stderr, "Unknown argument: %s", i->c_str());
+            fprintf(stderr, "Unknown argument: %s\n", i->c_str());
             return 0;
         }
     }
@@ -293,11 +297,24 @@ int main(int argc, char **argv)
     }
 
     auto result = 0;
+    auto cSeconds     = (cSecondsRequested ? cSecondsRequested : 5);
+    auto cThreads     = (cThreadsRequested ? cThreadsRequested : thread::hardware_concurrency());
+    auto llUpperLimit = (ullLimitRequested ? ullLimitRequested : DEFAULT_UPPER_LIMIT);
     if(!bQuiet) {
-        result = runSieve(cSecondsRequested, cThreadsRequested, ullLimitRequested, bQuiet, bPrintPrimes);
+        cout << "seconds " << cSeconds << ", threads " << cThreads << ", upper limit " << llUpperLimit << endl;
+    }
+    if(!bQuiet) {
+        if(bOneshot) {
+            prime_sieve checkSieve(llUpperLimit);
+            checkSieve.runSieve();
+            result = checkSieve.validateResults() ? checkSieve.countPrimes() : 0;
+            checkSieve.printResults(bPrintPrimes, 0, 1, 1);
+        } else {
+            result = runSieve(cSeconds, cThreads, llUpperLimit, bQuiet, bPrintPrimes);
+        }     
     } else {
-        for(int i=1; i<=cThreadsRequested; i++) {
-            result = runSieve(cSecondsRequested, i, ullLimitRequested, bQuiet, bPrintPrimes);
+        for(int i=1; i<=cThreads; i++) {
+            result = runSieve(cSeconds, i, llUpperLimit, bQuiet, bPrintPrimes);
         }
     }
     // On success return the count of primes found; on failure, return 0
