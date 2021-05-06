@@ -22,3 +22,5 @@ RUN DEBIAN_FRONTEND=noninteractive \
     TZ=Europe/London \
     apt install -y git build-essential
 
+RUN git config --global user.email "rolfn-github@pvv.org"
+RUN git config --global user.name "Rolf Rander Næss"

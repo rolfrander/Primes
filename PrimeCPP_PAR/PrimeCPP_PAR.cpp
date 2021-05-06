@@ -125,6 +125,12 @@ class prime_sieve
           uint64_t factor = 1;
           uint64_t q = (int) sqrt(Bits.size());
 
+          int64_t timings[1024];
+
+#ifdef PROFILE
+          int timingCounter = 0;
+          auto tStart       = steady_clock::now();
+#endif
           while (factor <= q)
           {
               for (uint64_t num = factor; num < Bits.size(); num++)
@@ -145,7 +151,23 @@ class prime_sieve
                   Bits[num] = false;
 
               factor++;
+#ifdef PROFILE
+              auto tEnd = steady_clock::now();
+              timings[timingCounter++ % 1024] = duration_cast<microseconds>(tEnd-tStart).count();
+              tStart = tEnd;   
+#endif
           }
+#ifdef PROFILE
+          if(timingCounter < 1024) {
+              for(int i=0; i<timingCounter; i++) {
+                  cout << i << ": " << timings[i] << endl;
+              }
+          } else {
+              for(int i=timingCounter-1024; i<timingCounter; i++) {
+                  cout << i << ": " << timings[i % 1024] << endl;
+              }
+          }
+#endif
       }
 
       // countPrimes
@@ -234,15 +256,15 @@ class prime_sieve
 };
 
 // doing the sieve in tranches trying to optimize cache usage
+// tranche size must be < 18769 (33rd prime squared) 
 class prime_sieve_tranches: public prime_sieve {
     protected:
-        vector<uint16_t> primes;
-        vector<uint64_t> counters;
+        uint16_t primes[32]; // store the first 32 primes here
+        uint64_t counters[32];
         uint16_t tranche_size;
+        uint16_t cnt = 0;
     public:
         prime_sieve_tranches(uint64_t n, uint16_t tranche_size) : prime_sieve(n), tranche_size(tranche_size) {
-            primes.reserve(tranche_size);
-            counters.reserve(tranche_size);
         }
 
         void runSieve()
@@ -254,10 +276,9 @@ class prime_sieve_tranches: public prime_sieve {
 
             // the Bits-array only contains values for odd numbers. The actual number n for index i is (i*2)+1
             uint64_t factor = 1; // this represents the prime "3", but we only store odd numbers
-            uint64_t tranche_q = (int)sqrt(tranche_size);
 
             // part 1
-            while(factor <= tranche_q) {
+            while(cnt < 32) {
                 for(uint64_t bit = factor; bit < tranche_size; bit++) {
                     if(Bits[bit]) {
                         factor = bit;
@@ -269,26 +290,20 @@ class prime_sieve_tranches: public prime_sieve {
                 for (bit = 2*factor*(factor + 1); bit < tranche_size; bit += (factor<<1)+1) {
                     Bits[bit] = false;
                 }
-                primes.push_back((uint16_t)factor);
-                counters.push_back(bit);
+                primes[cnt] = (uint16_t)factor;
+                counters[cnt] = bit;
+                cnt++;
                 factor++;
             }
-            for(uint64_t bit = factor; bit<tranche_size; bit++) {
-                if(Bits[bit]) {
-                    factor = bit;
-                    primes.push_back((uint16_t)factor);
-                    counters.push_back(2*factor*(factor+1));  // next value of num
-                }
-            }
 
+            // at this point factor == prime no 33 + 1
             // part 2
             for(uint64_t tranche = tranche_size; tranche<Bits.size(); tranche += tranche_size) {
-                for(int i=0; i<counters.size(); i++) {
-                    factor = primes[i];
-                    uint64_t last_counter = 0;
+                for(int i=0; i<cnt; i++) {
+                    uint64_t f = primes[i];
                     uint64_t num;
                     uint64_t end = min(Bits.size(), tranche+tranche_size);
-                    for (num = counters[i]; num < end; num += (factor<<1)+1) {
+                    for (num = counters[i]; num < end; num += (f<<1)+1) {
                         Bits[num] = false;
                     }
                     counters[i] = num;
@@ -297,7 +312,6 @@ class prime_sieve_tranches: public prime_sieve {
 
             // part 3
             uint64_t q = (int) sqrt(Bits.size());
-            factor++;
             while (factor <= q)
             {
                 for (uint64_t num = factor; num < Bits.size(); num++)
