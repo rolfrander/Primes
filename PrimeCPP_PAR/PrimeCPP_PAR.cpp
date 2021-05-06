@@ -89,14 +89,17 @@ const double baseline[] = {
 4562
 };
 
+#define prime(bit) ((bit<<1)+1)
+#define bit(prime) ((prime-1)>>1)
+
 // prime_sieve
-//
+// 
 // Represents the data comprising the sieve (an array of N bits, where N is the upper limit prime being tested)
 // as well as the code needed to eliminate non-primes from its array, which you perform by calling runSieve.
 
 class prime_sieve
 {
-  private:
+  protected:
 
       vector<bool> Bits;                                        // Sieve data, where 1==prime, 0==not
       uint64_t limit;
@@ -222,6 +225,7 @@ class prime_sieve
                << "Threads: " << threads << ", "
                << "Time: "    << duration << ", " 
                << "Average: " << duration/passes << ", "
+               << "Per second: " << passes/duration << ", "
                << "Limit: "   << limit << ", "
                << "Counts: "  << count << "/" << countPrimes() << ", "
                << "Valid : "  << (validateResults() ? "Pass" : "FAIL!") 
@@ -229,7 +233,96 @@ class prime_sieve
       }
 };
 
-int runSieve(int cSeconds, int cThreads, uint64_t llUpperLimit, bool bQuiet, bool bPrintPrimes) {
+// doing the sieve in tranches trying to optimize cache usage
+class prime_sieve_tranches: public prime_sieve {
+    protected:
+        vector<uint16_t> primes;
+        vector<uint64_t> counters;
+        uint16_t tranche_size;
+    public:
+        prime_sieve_tranches(uint64_t n, uint16_t tranche_size) : prime_sieve(n), tranche_size(tranche_size) {
+            primes.reserve(tranche_size);
+            counters.reserve(tranche_size);
+        }
+
+        void runSieve()
+        {
+            // split the sieve in 3:
+            // part 1: do the first tranche_size numbers, collect primes
+            // part 2: do all other tranches, do all primes in each tranche before moving on to next tranche
+            // part 3: do the rest of the primes
+
+            // the Bits-array only contains values for odd numbers. The actual number n for index i is (i*2)+1
+            uint64_t factor = 1; // this represents the prime "3", but we only store odd numbers
+            uint64_t tranche_q = (int)sqrt(tranche_size);
+
+            // part 1
+            while(factor <= tranche_q) {
+                for(uint64_t bit = factor; bit < tranche_size; bit++) {
+                    if(Bits[bit]) {
+                        factor = bit;
+                        break;
+                    }
+                }
+                uint64_t last_counter = 0;
+                uint64_t bit;
+                for (bit = 2*factor*(factor + 1); bit < tranche_size; bit += (factor<<1)+1) {
+                    Bits[bit] = false;
+                }
+                primes.push_back((uint16_t)factor);
+                counters.push_back(bit);
+                factor++;
+            }
+            for(uint64_t bit = factor; bit<tranche_size; bit++) {
+                if(Bits[bit]) {
+                    factor = bit;
+                    primes.push_back((uint16_t)factor);
+                    counters.push_back(2*factor*(factor+1));  // next value of num
+                }
+            }
+
+            // part 2
+            for(uint64_t tranche = tranche_size; tranche<Bits.size(); tranche += tranche_size) {
+                for(int i=0; i<counters.size(); i++) {
+                    factor = primes[i];
+                    uint64_t last_counter = 0;
+                    uint64_t num;
+                    uint64_t end = min(Bits.size(), tranche+tranche_size);
+                    for (num = counters[i]; num < end; num += (factor<<1)+1) {
+                        Bits[num] = false;
+                    }
+                    counters[i] = num;
+                }
+            }
+
+            // part 3
+            uint64_t q = (int) sqrt(Bits.size());
+            factor++;
+            while (factor <= q)
+            {
+                for (uint64_t num = factor; num < Bits.size(); num++)
+                {
+                    if (Bits[num])
+                    {
+                        factor = num;
+                        break;
+                    }
+                }
+                // the starting number is supposed to be factor squared, but since the factor is scaled and
+                // shifted we need some maths here...
+                // n = (factor*2)+1
+                // => n^2 = 4*factor^2 + 4*factor + 1
+                // scaling back, subtract one and divide by 2: 2*factor^2 + 2*factor = 2 * factor * (factor + 1)
+                // each jump is also scaled
+                for (uint64_t num = 2*factor*(factor + 1); num < Bits.size(); num += (factor<<1)+1)
+                    Bits[num] = false;
+
+                factor++;
+            }
+        }
+};
+
+int runSieveThreads(int cSeconds, int cThreads, uint64_t llUpperLimit, bool bQuiet, bool bPrintPrimes) {
     auto cPasses      = 0;
 
     if (!bQuiet)
@@ -305,12 +398,61 @@ int runSieve(int cSeconds, int cThreads, uint64_t llUpperLimit, bool bQuiet, boo
     return result;
 }
 
+int runSieveTranche(int cSeconds, uint16_t cTrancheSize, uint64_t llUpperLimit, bool bQuiet, bool bPrintPrimes) {
+    auto cPasses      = 0;
+
+    if (!bQuiet)
+    {
+        printf("Computing primes to %lu with tranches of size %d for %d second%s.\n", 
+            llUpperLimit,
+            cTrancheSize,
+            cSeconds,
+            cSeconds == 1 ? "" : "s"
+        );
+    }
+
+    auto tStart       = steady_clock::now();
+
+
+    while (duration_cast<seconds>(steady_clock::now() - tStart).count() < cSeconds)
+    {
+        vector<thread> threadPool;
+        
+        // We create N threads and give them each the job of runing the 'runSieve' method on a sieve
+        // that we create on the heap, rather than the stack, due to their possible enormity.  By using
+        // a unique_ptr it will automatically free resources as soon as its torn down.
+
+        std::unique_ptr<prime_sieve_tranches>(new prime_sieve_tranches(llUpperLimit, cTrancheSize))->runSieve(); 
+        // Credit us with one pass for each of the threads we did work on
+        cPasses++;
+    }
+
+    auto tEnd = steady_clock::now() - tStart;
+    auto duration = duration_cast<microseconds>(tEnd).count()/1000000.0;
+    
+    prime_sieve checkSieve(llUpperLimit);
+    checkSieve.runSieve();
+    auto result = checkSieve.validateResults() ? checkSieve.countPrimes() : 0;
+  
+    if (!bQuiet)
+        checkSieve.printResults(bPrintPrimes, duration , cPasses, 1);
+    else {
+        double b = baseline[0];
+        double speed = cPasses / duration;
+        cout << cTrancheSize << ", " << speed << ", " << int((speed/b-1)*100) << endl;
+        //cout << cThreads << ", " << cPasses / duration << ", " << cPasses << ", " << duration / cPasses << endl;
+
+    }
+
+    return result;
+}
 int main(int argc, char **argv)
 {
     vector<string> args(argv + 1, argv + argc);         // From first to last argument in the argv array
     uint64_t ullLimitRequested = 0;
     auto cThreadsRequested = 0;
     auto cSecondsRequested = 0;
+    auto cTrancheSize      = 0;
     auto bPrintPrimes      = false;
     auto bOneshot          = false;
     auto bQuiet            = false;
@@ -330,6 +472,11 @@ int main(int argc, char **argv)
         {
             i++;
             cThreadsRequested = (i == args.end()) ? 0 : max(1, atoi(i->c_str()));
+        }
+        else if (*i == "-r" || *i == "--tranches") 
+        {
+            i++;
+            cTrancheSize = (i == args.end()) ? 0 : max(1, atoi(i->c_str()));
         }
         else if (*i == "-s" || *i == "--seconds") 
         {
@@ -361,6 +508,11 @@ int main(int argc, char **argv)
         }
     }
 
+    if(cTrancheSize > 0 && cThreadsRequested > 1) {
+        cout << "only one of --tranches or --threads can be specified" << endl;
+        return 0;
+    }
+
     if (!bQuiet)
     {
         cout << "Primes Benchmark (c) 2021 Dave's Garage - http://github.com/davepl/primes" << endl;
@@ -383,20 +535,33 @@ int main(int argc, char **argv)
     if(!bQuiet) {
         cout << "seconds " << cSeconds << ", threads " << cThreads << ", upper limit " << llUpperLimit << endl;
     }
-    if(!bQuiet) {
+
+    if(cTrancheSize > 0) {
         if(bOneshot) {
-            prime_sieve checkSieve(llUpperLimit);
+            prime_sieve_tranches checkSieve(llUpperLimit, cTrancheSize);
             checkSieve.runSieve();
             result = checkSieve.validateResults() ? checkSieve.countPrimes() : 0;
             checkSieve.printResults(bPrintPrimes, 0, 1, 1);
         } else {
-            result = runSieve(cSeconds, cThreads, llUpperLimit, bQuiet, bPrintPrimes);
-        }     
+            result = runSieveTranche(cSeconds, cTrancheSize, llUpperLimit, bQuiet, bPrintPrimes);
+        }
     } else {
-        for(int i=1; i<=cThreads; i++) {
-            result = runSieve(cSeconds, i, llUpperLimit, bQuiet, bPrintPrimes);
+        if(!bQuiet) {
+            if(bOneshot) {
+                prime_sieve checkSieve(llUpperLimit);
+                checkSieve.runSieve();
+                result = checkSieve.validateResults() ? checkSieve.countPrimes() : 0;
+                checkSieve.printResults(bPrintPrimes, 0, 1, 1);
+            } else {
+                result = runSieveThreads(cSeconds, cThreads, llUpperLimit, bQuiet, bPrintPrimes);
+            }     
+        } else {
+            for(int i=1; i<=cThreads; i++) {
+                result = runSieveThreads(cSeconds, i, llUpperLimit, bQuiet, bPrintPrimes);
+            }
         }
     }
+
     // On success return the count of primes found; on failure, return 0
 
     return (int) result;
